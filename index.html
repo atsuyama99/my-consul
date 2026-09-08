@@ -100,6 +100,7 @@
 
   /* FORM */
   .form-stack { display: flex; flex-direction: column; gap: 12px; }
+  [hidden] { display: none !important; }
   .form-group { display: flex; flex-direction: column; gap: 6px; }
   .form-group label { font-size: 12px; color: var(--text2); font-weight: 500; }
   input, select, textarea {
@@ -231,10 +232,27 @@
     <table class="table">
       <tr><td style="color:var(--text2)">業務委託（確定）</td><td style="text-align:right;font-family:'Space Mono',monospace"><span class="edit-trigger" onclick="startInlineEdit('contract')"><span id="s-contract">¥270,000</span> <span class="edit-icon">✏️</span></span></td></tr>
       <tr><td style="color:var(--text2)">副業目標</td><td style="text-align:right;font-family:'Space Mono',monospace" id="s-salon-target">¥50,000</td></tr>
-      <tr><td style="color:var(--text2)">固定費</td><td style="text-align:right;font-family:'Space Mono',monospace"><span class="edit-trigger" onclick="startInlineEdit('fixed')"><span id="s-fixed">¥212,702</span> <span class="edit-icon">✏️</span></span></td></tr>
+      <tr><td style="color:var(--text2)">固定費</td><td style="text-align:right;font-family:'Space Mono',monospace"><span class="edit-trigger" onclick="toggleFixedCard()"><span id="s-fixed">¥212,702</span> <span class="edit-icon" id="fixed-toggle-icon">▸</span></span></td></tr>
       <tr><td style="color:var(--text2)">変動費上限</td><td style="text-align:right;font-family:'Space Mono',monospace"><span class="edit-trigger" onclick="startInlineEdit('varLimit')"><span id="s-var-limit">¥50,000</span> <span class="edit-icon">✏️</span></span></td></tr>
       <tr style="border-top:1px solid var(--border)"><td style="font-weight:700">貯金目標</td><td style="text-align:right;font-family:'Space Mono',monospace;color:var(--green);font-weight:700" id="s-chokin-target">-</td></tr>
     </table>
+  </div>
+
+  <div class="card" id="fixed-card" hidden>
+    <div class="card-title">固定費の内訳（<span id="fixed-month-label"></span>）</div>
+    <div id="fixed-mode-note" style="font-size:12px;color:var(--text2);margin-bottom:8px;line-height:1.6"></div>
+    <div id="fixed-list"></div>
+    <div id="fixed-add" class="form-stack" style="margin-top:12px">
+      <div style="display:flex;gap:8px">
+        <input type="text" id="input-fixed-name" placeholder="項目名（家賃など）" style="flex:1;min-width:0">
+        <input type="number" id="input-fixed-amount" placeholder="金額" inputmode="numeric" style="width:120px">
+      </div>
+      <button class="btn btn-primary" onclick="addFixedItem()">追加する</button>
+      <button class="btn btn-outline" id="btn-fixed-apply" onclick="applyFixedToMaster()">来月以降もこの内容にする</button>
+    </div>
+    <div id="fixed-legacy" hidden>
+      <button class="btn btn-outline" onclick="convertLegacyToItems()">基本リストから内訳を作る</button>
+    </div>
   </div>
 
   <div class="card">
@@ -395,9 +413,32 @@ const ROADMAP = [
   { month:'2028/1',  task:'出発🎉',                               savings:'236万以上', incomeTarget:150000, tag:'depart', fixed:224002 },
 ];
 
+// ======= FIXED COST ITEMS =======
+// 基本リスト（月ごとの内訳が無い月はこれが使われる）
+const DEFAULT_FIXED_ITEMS = [
+  { name:'家賃（実質負担）', amount:78440 },
+  { name:'通信費（スマホ）', amount:1845 },
+  { name:'通信費（WiFi）', amount:4673 },
+  { name:'電気ガス', amount:5000 },
+  { name:'水道', amount:2200 },
+  { name:'DAZN', amount:3480 },
+  { name:'U-NEXT', amount:2600 },
+  { name:'YouTubeプレミアム', amount:1280 },
+  { name:'PC分割', amount:28234 },
+  { name:'ジム', amount:8140 },
+  { name:'アクアボイス', amount:1500 },
+  { name:'国民年金', amount:17510 },
+  { name:'確定拠出年金', amount:5000 },
+  { name:'健康保険', amount:38600 },
+  { name:'所得税・住民税', amount:20000 },
+].map((it, i) => ({ ...it, id: 1000 + i }));
+
+function cloneItems(items) { return (items || []).map(it => ({ name: it.name, amount: it.amount, id: it.id })); }
+function sumItems(items) { return (items || []).reduce((s, it) => s + (it.amount || 0), 0); }
+
 // ======= STATE (month-keyed) =======
 function migrateState(raw) {
-  if (!raw) return { totalAsset: 1730000, months: {} };
+  if (!raw) return { totalAsset: 1730000, months: {}, fixedMaster: cloneItems(DEFAULT_FIXED_ITEMS) };
   // Migrate from old flat format
   if (!raw.months) {
     const oldMonth = raw._month || CURRENT_MONTH;
@@ -410,8 +451,10 @@ function migrateState(raw) {
       salonMemo: raw.salonMemo || '',
       expenses: raw.expenses || [],
     };
+    migrated.fixedMaster = cloneItems(DEFAULT_FIXED_ITEMS);
     return migrated;
   }
+  if (!Array.isArray(raw.fixedMaster)) raw.fixedMaster = cloneItems(DEFAULT_FIXED_ITEMS);
   return raw;
 }
 
@@ -544,7 +587,17 @@ function saveAsset() {
 
 // ======= DASHBOARD =======
 function getContract(md, rd) { return md.contract != null ? md.contract : 270000; }
-function getFixed(md, rd) { return md.fixed != null ? md.fixed : rd.fixed; }
+function getFixedMode(md) {
+  if (Array.isArray(md.fixedItems)) return 'month';
+  if (md.fixed != null) return 'legacy';
+  return 'master';
+}
+function getFixed(md, rd) {
+  const mode = getFixedMode(md);
+  if (mode === 'month') return sumItems(md.fixedItems);
+  if (mode === 'legacy') return md.fixed;
+  return sumItems(state.fixedMaster);
+}
 function getVarLimit(md, rd) { return md.varLimit != null ? md.varLimit : 50000; }
 
 function updateDashboard() {
@@ -594,6 +647,7 @@ function updateDashboard() {
       </div>`
     ).join('');
   }
+  renderFixedCard();
 }
 
 function setBar(id, pct, color) {
@@ -606,9 +660,10 @@ function setBar(id, pct, color) {
 function startInlineEdit(field) {
   const md = getMonthData(viewMonth);
   const rd = getRoadmapData(viewMonth);
-  const current = field === 'contract' ? getContract(md, rd) : field === 'fixed' ? getFixed(md, rd) : getVarLimit(md, rd);
-  const label = field === 'contract' ? '業務委託' : field === 'fixed' ? '固定費' : '変動費上限';
-  const el = document.getElementById(field === 'contract' ? 's-contract' : field === 'fixed' ? 's-fixed' : 's-var-limit');
+  if (field === 'fixed') { toggleFixedCard(); return; }
+  const current = field === 'contract' ? getContract(md, rd) : getVarLimit(md, rd);
+  const label = field === 'contract' ? '業務委託' : '変動費上限';
+  const el = document.getElementById(field === 'contract' ? 's-contract' : 's-var-limit');
   const parent = el.closest('.edit-trigger');
   parent.outerHTML = `<div class="inline-edit" id="edit-${field}">
     <input type="number" value="${current}" inputmode="numeric" style="font-size:13px;padding:6px 8px;">
@@ -641,7 +696,7 @@ function rebuildSummaryTable() {
   const fixed = getFixed(md, rd);
   const varLimit = getVarLimit(md, rd);
   // Restore edit-trigger elements if they were replaced by inline-edit
-  ['contract', 'fixed', 'varLimit'].forEach(field => {
+  ['contract', 'varLimit'].forEach(field => {
     const editEl = document.getElementById('edit-' + field);
     if (editEl) {
       const spanId = field === 'contract' ? 's-contract' : field === 'fixed' ? 's-fixed' : 's-var-limit';
@@ -652,6 +707,152 @@ function rebuildSummaryTable() {
   document.getElementById('s-contract').textContent = '¥' + contract.toLocaleString();
   document.getElementById('s-fixed').textContent = '¥' + fixed.toLocaleString();
   document.getElementById('s-var-limit').textContent = '¥' + varLimit.toLocaleString();
+}
+
+// ======= FIXED COST BREAKDOWN =======
+let fixedCardOpen = false;
+let fixedEditingId = null;
+
+function toggleFixedCard() {
+  fixedCardOpen = !fixedCardOpen;
+  renderFixedCard();
+  if (fixedCardOpen) document.getElementById('fixed-card').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+
+function fixedItemsEqualMaster(items) {
+  const a = items || [], b = state.fixedMaster || [];
+  if (a.length !== b.length) return false;
+  return a.every((it, i) => it.name === b[i].name && it.amount === b[i].amount);
+}
+
+// その月の内訳が無ければ基本リストをコピーして月専用にする（copy-on-write）
+function ensureMonthFixedItems() {
+  const md = getMonthData(viewMonth);
+  if (!Array.isArray(md.fixedItems)) {
+    md.fixedItems = cloneItems(state.fixedMaster);
+    delete md.fixed;
+  }
+  return md.fixedItems;
+}
+
+function renderFixedCard() {
+  const card = document.getElementById('fixed-card');
+  if (!card) return;
+  card.hidden = !fixedCardOpen;
+  document.getElementById('fixed-toggle-icon').textContent = fixedCardOpen ? '▾' : '▸';
+  if (!fixedCardOpen) return;
+
+  const md = getMonthData(viewMonth);
+  const mode = getFixedMode(md);
+  document.getElementById('fixed-month-label').textContent = viewMonth;
+  const note = document.getElementById('fixed-mode-note');
+  const listEl = document.getElementById('fixed-list');
+  const addEl = document.getElementById('fixed-add');
+  const legacyEl = document.getElementById('fixed-legacy');
+  const applyBtn = document.getElementById('btn-fixed-apply');
+
+  if (mode === 'legacy') {
+    note.textContent = 'この月は合計だけ登録されています（内訳なし）。内訳で管理する場合は、基本リストから作り直せます。合計 ¥' + md.fixed.toLocaleString() + ' は内訳の合計に置き換わります。';
+    listEl.innerHTML = `<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700">
+        <span>合計</span><span style="font-family:'Space Mono',monospace">¥${md.fixed.toLocaleString()}</span></div>`;
+    addEl.hidden = true; legacyEl.hidden = false;
+    return;
+  }
+
+  const items = mode === 'month' ? md.fixedItems : state.fixedMaster;
+  const sameAsMaster = mode === 'master' || fixedItemsEqualMaster(items);
+  note.textContent = mode === 'master'
+    ? '基本リストの内容です。変更するとこの月だけの内訳になります。'
+    : (sameAsMaster ? 'この月の内訳（基本リストと同じ内容）' : 'この月だけの内訳です。来月以降も同じにするなら下のボタンで基本リストを更新してください。');
+  addEl.hidden = false; legacyEl.hidden = true;
+  applyBtn.hidden = sameAsMaster;
+
+  if (items.length === 0) {
+    listEl.innerHTML = '<div style="color:var(--text2);font-size:12px;text-align:center;padding:12px">項目がありません</div>';
+  } else {
+    listEl.innerHTML = items.map(it => `
+      <div class="exp-item">
+        <div><div class="exp-cat">${escapeHtml(it.name)}</div></div>
+        <div class="exp-right">
+          ${fixedEditingId === it.id
+            ? `<input type="number" id="fixed-edit-input" value="${it.amount}" inputmode="numeric" style="width:110px;font-size:14px;padding:6px 8px" onkeydown="if(event.key==='Enter')saveFixedAmount(${it.id})">
+               <button class="btn-sm btn-primary" style="font-size:11px;padding:4px 10px" onclick="saveFixedAmount(${it.id})">保存</button>`
+            : `<span class="exp-amt" style="cursor:pointer" onclick="editFixedAmount(${it.id})">¥${it.amount.toLocaleString()} <span class="edit-icon">✏️</span></span>
+               <button class="btn-danger-sm" onclick="deleteFixedItem(${it.id})">削除</button>`}
+        </div>
+      </div>`).join('') +
+      `<div style="display:flex;justify-content:space-between;padding:10px 0;font-weight:700;border-top:1px solid var(--border)">
+        <span>合計</span>
+        <span style="font-family:'Space Mono',monospace;color:var(--accent)">¥${sumItems(items).toLocaleString()}</span>
+      </div>`;
+  }
+  if (fixedEditingId !== null) {
+    const inp = document.getElementById('fixed-edit-input');
+    if (inp) { inp.focus(); inp.select(); }
+  }
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
+
+function refreshAfterFixedChange() {
+  saveState();
+  rebuildSummaryTable();
+  updateDashboard();
+  updateExpenseUI();
+}
+
+function addFixedItem() {
+  const name = document.getElementById('input-fixed-name').value.trim();
+  const amount = parseInt(document.getElementById('input-fixed-amount').value) || 0;
+  if (!name) { alert('項目名を入れてください'); return; }
+  if (!amount) { alert('金額を入れてください'); return; }
+  ensureMonthFixedItems().push({ name, amount, id: Date.now() });
+  document.getElementById('input-fixed-name').value = '';
+  document.getElementById('input-fixed-amount').value = '';
+  refreshAfterFixedChange();
+}
+
+function deleteFixedItem(id) {
+  const items = ensureMonthFixedItems();
+  const it = items.find(x => x.id === id);
+  if (it && !confirm(`「${it.name}」をこの月の固定費から削除しますか？`)) return;
+  const md = getMonthData(viewMonth);
+  md.fixedItems = items.filter(x => x.id !== id);
+  refreshAfterFixedChange();
+}
+
+function editFixedAmount(id) {
+  fixedEditingId = id;
+  renderFixedCard();
+}
+
+function saveFixedAmount(id) {
+  const inp = document.getElementById('fixed-edit-input');
+  const val = parseInt(inp && inp.value) || 0;
+  fixedEditingId = null;
+  if (!val) { renderFixedCard(); return; }
+  const items = ensureMonthFixedItems();
+  const it = items.find(x => x.id === id);
+  if (it) it.amount = val;
+  refreshAfterFixedChange();
+}
+
+function applyFixedToMaster() {
+  const md = getMonthData(viewMonth);
+  if (!Array.isArray(md.fixedItems)) return;
+  if (!confirm('この月の内訳を基本リストにします。内訳を持たない月（来月以降など）はすべてこの内容になります。よろしいですか？')) return;
+  state.fixedMaster = cloneItems(md.fixedItems);
+  refreshAfterFixedChange();
+}
+
+function convertLegacyToItems() {
+  const md = getMonthData(viewMonth);
+  if (!confirm('合計 ¥' + md.fixed.toLocaleString() + ' を基本リストの内訳に置き換えます。よろしいですか？')) return;
+  md.fixedItems = cloneItems(state.fixedMaster);
+  delete md.fixed;
+  refreshAfterFixedChange();
 }
 
 function addSalonIncome() {
