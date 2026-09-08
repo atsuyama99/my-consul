@@ -216,7 +216,7 @@
     <div class="stat">
       <div class="stat-label">今月の変動費</div>
       <div class="stat-value" id="dash-variable">¥0</div>
-      <div class="stat-sub">上限: ¥50,000</div>
+      <div class="stat-sub">上限: <span id="dash-var-limit">¥50,000</span></div>
       <div class="progress-wrap"><div class="progress-bar" id="pb-variable" style="background:var(--green);width:0%"></div></div>
     </div>
   </div>
@@ -231,10 +231,10 @@
     <div class="card-title">今月サマリー（<span id="current-month-label"></span>）</div>
     <table class="table">
       <tr><td style="color:var(--text2)">業務委託（確定）</td><td style="text-align:right;font-family:'Space Mono',monospace"><span class="edit-trigger" onclick="startInlineEdit('contract')"><span id="s-contract">¥270,000</span> <span class="edit-icon">✏️</span></span></td></tr>
-      <tr><td style="color:var(--text2)">副業目標</td><td style="text-align:right;font-family:'Space Mono',monospace" id="s-salon-target">¥50,000</td></tr>
+      <tr><td style="color:var(--text2)">副業収入（現状）</td><td style="text-align:right;font-family:'Space Mono',monospace" id="s-salon-actual">¥0</td></tr>
       <tr><td style="color:var(--text2)">固定費</td><td style="text-align:right;font-family:'Space Mono',monospace"><span class="edit-trigger" onclick="toggleFixedCard()"><span id="s-fixed">¥212,702</span> <span class="edit-icon" id="fixed-toggle-icon">▸</span></span></td></tr>
-      <tr><td style="color:var(--text2)">変動費上限</td><td style="text-align:right;font-family:'Space Mono',monospace"><span class="edit-trigger" onclick="startInlineEdit('varLimit')"><span id="s-var-limit">¥50,000</span> <span class="edit-icon">✏️</span></span></td></tr>
-      <tr style="border-top:1px solid var(--border)"><td style="font-weight:700">貯金目標</td><td style="text-align:right;font-family:'Space Mono',monospace;color:var(--green);font-weight:700" id="s-chokin-target">-</td></tr>
+      <tr><td style="color:var(--text2)">変動費（現時点）</td><td style="text-align:right;font-family:'Space Mono',monospace" id="s-var-actual">¥0</td></tr>
+      <tr style="border-top:1px solid var(--border)"><td style="font-weight:700">貯金見込み</td><td style="text-align:right;font-family:'Space Mono',monospace;color:var(--green);font-weight:700" id="s-chokin-target">-</td></tr>
     </table>
   </div>
 
@@ -286,7 +286,7 @@
   <div class="stat" style="margin-bottom:12px">
     <div class="stat-label">今月の変動費合計</div>
     <div style="font-size:28px;font-weight:700;font-family:'Space Mono',monospace;margin:4px 0" id="exp-total-disp">¥0</div>
-    <div style="font-size:12px;color:var(--text2)">上限まで残り <span id="exp-remaining" class="green">¥50,000</span>（上限: <span id="exp-limit-label">¥50,000</span>）</div>
+    <div style="font-size:12px;color:var(--text2);display:flex;flex-wrap:wrap;align-items:center;gap:4px">上限まで残り <span id="exp-remaining" class="green">¥50,000</span>（上限: <span id="exp-limit-wrap"><span id="exp-limit-label">¥50,000</span></span>）</div>
     <div class="progress-wrap"><div class="progress-bar" id="pb-exp" style="background:var(--green);width:0%"></div></div>
   </div>
 
@@ -615,6 +615,7 @@ function updateDashboard() {
   document.getElementById('dash-salon').textContent = '¥' + salon.toLocaleString();
   document.getElementById('dash-salon-target').textContent = '¥' + target.toLocaleString();
   document.getElementById('dash-variable').textContent = '¥' + totalVar.toLocaleString();
+  document.getElementById('dash-var-limit').textContent = '¥' + varLimit.toLocaleString();
   document.getElementById('dash-chokin').textContent = '¥' + chokin.toLocaleString();
   document.getElementById('dash-chokin').className = 'stat-value ' + (chokin >= 50000 ? 'green' : chokin >= 30000 ? 'yellow' : 'red');
 
@@ -627,10 +628,10 @@ function updateDashboard() {
 
   document.getElementById('current-month-label').textContent = viewMonth;
   document.getElementById('s-contract').textContent = '¥' + contract.toLocaleString();
-  document.getElementById('s-salon-target').textContent = '¥' + target.toLocaleString();
+  document.getElementById('s-salon-actual').textContent = '¥' + salon.toLocaleString();
   document.getElementById('s-fixed').textContent = '¥' + fixed.toLocaleString();
-  document.getElementById('s-var-limit').textContent = '¥' + varLimit.toLocaleString();
-  document.getElementById('s-chokin-target').textContent = '¥' + (contract + target - fixed - varLimit).toLocaleString();
+  document.getElementById('s-var-actual').textContent = '¥' + totalVar.toLocaleString();
+  document.getElementById('s-chokin-target').textContent = '¥' + chokin.toLocaleString();
 
   // expense summary in dashboard
   const catMap = {};
@@ -696,17 +697,31 @@ function rebuildSummaryTable() {
   const fixed = getFixed(md, rd);
   const varLimit = getVarLimit(md, rd);
   // Restore edit-trigger elements if they were replaced by inline-edit
-  ['contract', 'varLimit'].forEach(field => {
-    const editEl = document.getElementById('edit-' + field);
-    if (editEl) {
-      const spanId = field === 'contract' ? 's-contract' : field === 'fixed' ? 's-fixed' : 's-var-limit';
-      const val = field === 'contract' ? contract : field === 'fixed' ? fixed : varLimit;
-      editEl.outerHTML = `<span class="edit-trigger" onclick="startInlineEdit('${field}')"><span id="${spanId}">¥${val.toLocaleString()}</span> <span class="edit-icon">✏️</span></span>`;
-    }
-  });
+  const editEl = document.getElementById('edit-contract');
+  if (editEl) {
+    editEl.outerHTML = `<span class="edit-trigger" onclick="startInlineEdit('contract')"><span id="s-contract">¥${contract.toLocaleString()}</span> <span class="edit-icon">✏️</span></span>`;
+  }
   document.getElementById('s-contract').textContent = '¥' + contract.toLocaleString();
   document.getElementById('s-fixed').textContent = '¥' + fixed.toLocaleString();
-  document.getElementById('s-var-limit').textContent = '¥' + varLimit.toLocaleString();
+}
+
+// ======= VAR LIMIT EDIT (expense tab) =======
+let varLimitEditing = false;
+function startVarLimitEdit() { varLimitEditing = true; updateExpenseUI(); const i = document.getElementById('exp-limit-input'); if (i) { i.focus(); i.select(); } }
+function cancelVarLimitEdit() { varLimitEditing = false; updateExpenseUI(); }
+function saveVarLimitEdit() {
+  const val = parseInt(document.getElementById('exp-limit-input').value) || 0;
+  varLimitEditing = false;
+  if (val > 0) { getMonthData(viewMonth).varLimit = val; saveState(); }
+  updateExpenseUI();
+  updateDashboard();
+}
+function renderVarLimitLabel(varLimit) {
+  const wrap = document.getElementById('exp-limit-wrap');
+  if (!wrap) return;
+  wrap.innerHTML = varLimitEditing
+    ? `<span class="inline-edit" style="display:inline-flex;margin:0;gap:6px"><input type="number" id="exp-limit-input" value="${varLimit}" inputmode="numeric" style="width:100px;font-size:13px;padding:4px 8px" onkeydown="if(event.key==='Enter')saveVarLimitEdit()"><button class="btn-sm btn-primary" style="font-size:11px;padding:4px 10px" onclick="saveVarLimitEdit()">保存</button><button class="btn-sm btn-outline" style="font-size:11px;padding:4px 10px" onclick="cancelVarLimitEdit()">戻す</button></span>`
+    : `<span class="edit-trigger" onclick="startVarLimitEdit()"><span id="exp-limit-label">¥${varLimit.toLocaleString()}</span> <span class="edit-icon">✏️</span></span>`;
 }
 
 // ======= FIXED COST BREAKDOWN =======
@@ -937,7 +952,7 @@ function updateExpenseUI() {
   document.getElementById('exp-remaining').textContent = remaining >= 0 ? '¥' + remaining.toLocaleString() : '▲¥' + Math.abs(remaining).toLocaleString();
   document.getElementById('exp-remaining').className = remaining >= 0 ? 'green' : 'red';
   setBar('pb-exp', total / varLimit * 100, total > varLimit ? 'var(--red)' : total > varLimit * 0.8 ? 'var(--yellow)' : 'var(--green)');
-  document.getElementById('exp-limit-label').textContent = '¥' + varLimit.toLocaleString();
+  renderVarLimitLabel(varLimit);
 
   // category breakdown
   const catMap = {};
